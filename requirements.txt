@@ -4,7 +4,7 @@
 #### ESSENTIAL LIBRARIES FOR MAIN FUNCTIONALITY ####
 
 # Neural net and related libraries.
-keras==2.0.3
+keras
 h5py
 scikit-learn
 
@@ -80,7 +80,7 @@ tqdm
 #### DOC-RELATED PACKAGES ####
 
 # Builds our documentation.
-sphinx
+sphinx==1.5.3
 
 # Watches the documentation directory and rebuilds on changes.
 sphinx-autobuild

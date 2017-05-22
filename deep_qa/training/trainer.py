@@ -4,8 +4,9 @@ from typing import Any, Dict, List, Tuple
 
 import numpy
 from keras.models import model_from_json
-from keras.callbacks import LambdaCallback, TensorBoard, EarlyStopping, CallbackList, ModelCheckpoint
+from keras.callbacks import CallbackList, EarlyStopping, LambdaCallback, ModelCheckpoint, TensorBoard
 
+from ..training.callbacks import ReplicaModelCheckpoint
 from ..common.checks import ConfigurationError
 from ..common.params import Params
 from ..data.dataset import Dataset, IndexedDataset
@@ -13,6 +14,7 @@ from ..data.instances.instance import Instance
 from ..layers.wrappers import OutputMask
 from .models import DeepQaModel
 from .optimizers import optimizer_from_params
+from .multi_gpu import make_parallel
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
@@ -69,6 +71,13 @@ class Trainer:
         model_serialization_prefix parameter, or the code will crash.
     model_serialization_prefix: str, optional (default=None)
         Prefix for saving and loading model files.  Must be set if ``save_models`` is ``True``.
+    num_gpus: int, optional (default=1) Number of GPUs to use. In DeepQa we use Data Parallelism,
+        meaning that we create copies of the full model for each GPU, allowing the batch size of
+        your model to be scaled depending on the number of GPUs. Note that using multiple GPUs
+        effectively increases your batch size by the number of GPUs you have, meaning that other
+        code which depends on the batch size will be effected - for example, if you are using
+        dynamic padding, the batches will be larger and hence more padded, as the dataset is
+        chunked into fewer overall batches.
     batch_size: int, optional (default=32)
         Batch size to use when training.
     num_epochs: int, optional (default=20)
@@ -148,10 +157,18 @@ class Trainer:
             os.makedirs(parent_directory, exist_ok=True)
 
         # `model.fit()` parameters.
+        self.num_gpus = params.pop("num_gpus", 1)
         self.validation_split = params.pop('validation_split', 0.1)
         self.batch_size = params.pop('batch_size', 32)
+
+        # If you've got more than one gpu, we make a mega batch, which then
+        # gets split across the number of gpus you have.
+        if self.num_gpus > 1:
+            self.batch_size *= self.num_gpus
+
         self.num_epochs = params.pop('num_epochs', 20)
         self.optimizer = optimizer_from_params(params.pop('optimizer', 'adam'))
+        self.gradient_clipping = params.pop('gradient_clipping', {'type': 'clip_by_norm', "value": 10})
         self.loss = params.pop('loss', 'categorical_crossentropy')
         self.metrics = params.pop('metrics', ['accuracy'])
         self.validation_metric = params.pop('validation_metric', 'val_acc')
@@ -281,8 +298,11 @@ class Trainer:
         # Then we build the model and compile it.
         logger.info("Building the model")
         self.model = self._build_model()
+        if self.num_gpus > 1:
+            self.model = make_parallel(self.model, self.num_gpus)
+
         self.model.summary(show_masks=self.show_summary_with_masking)
-        self.model.compile(**self.__compile_kwargs())
+        self.model.compile(self.__compile_kwargs())
 
         if self.debug_params:
             # Get the list of layers whose outputs will be visualized as per the
@@ -362,7 +382,7 @@ class Trainer:
         self.model.summary(show_masks=self.show_summary_with_masking)
         self._load_auxiliary_files()
         self._set_params_from_model()
-        self.model.compile(**self.__compile_kwargs())
+        self.model.compile(self.__compile_kwargs())
         self.update_model_state_with_training_data = False
 
     def evaluate_model(self, data_files: List[str], max_instances: int=None):
@@ -383,10 +403,11 @@ class Trainer:
     # Abstract methods - you MUST override these
     ##################
 
-    def score_dataset(self, dataset: Dataset) -> List[Any]:
+    def score_dataset(self, dataset: Dataset) -> Tuple[numpy.array, numpy.array]:
         """
-        Takes a `Dataset`, indexes it, and returns the output of evaluating the model on all
-        instances. The return type here depends on the output of your model.
+        Takes a ``Dataset``, indexes it, and returns the output of evaluating the model on all
+        instances, and labels for the instances from the data, if they were given. The specifics of
+        the numpy array that are returned depend on the model and the instance type in the dataset.
 
         Parameters
         ----------
@@ -395,8 +416,15 @@ class Trainer:
 
         Returns
         -------
-        Predictions for each ``Instance`` in the ``Dataset``. The actual type depends on
-        the output of your model.
+        predictions: numpy.array
+            Predictions for each ``Instance`` in the ``Dataset``.  This could actually be a
+            tuple/list of arrays, if your model has multiple outputs
+        labels: numpy.array
+            The labels for each ``Instance`` in the ``Dataset``, if there were any (this will be
+            ``None`` if there were no labels).  We return this so you can easily compute metrics
+            over these predictions if you wish.  It's hard to get numpy arrays with the labels from
+            a non-indexed-and-padded ``Dataset``, so we return it here so you don't have to do any
+            funny business to get the label array.
         """
         raise NotImplementedError
 
@@ -511,9 +539,11 @@ class Trainer:
         # Some witchcraft is happening here - we don't specify the epoch replacement variable
         # checkpointing string, because Keras does that within the callback if we specify it here.
         if self.save_models:
-            checkpointing = ModelCheckpoint(self.model_prefix + "_weights_epoch={epoch:d}.h5",
-                                            save_best_only=True, save_weights_only=True,
-                                            monitor=self.validation_metric)
+
+            checkpoint_callback = ReplicaModelCheckpoint if self.num_gpus > 1 else ModelCheckpoint
+            checkpointing = checkpoint_callback(self.model_prefix + "_weights_epoch={epoch:d}.h5",
+                                                save_best_only=True, save_weights_only=True,
+                                                monitor=self.validation_metric)
             callbacks.append(checkpointing)
 
         return CallbackList(callbacks)
@@ -582,11 +612,14 @@ class Trainer:
         Called after training. If you have some auxiliary object, such as an object storing
         the vocabulary of your model, you can save it here. The model config is saved by default.
         """
-        model_config = self.model.to_json()
+        if self.num_gpus > 1:
+            num_lambda_layers = len(self.model.outputs)
+            model_config = self.model.layers[-(num_lambda_layers + 1)].to_json()
+        else:
+            model_config = self.model.to_json()
         model_config_file = open("%s_config.json" % (self.model_prefix), "w")
         print(model_config, file=model_config_file)
         model_config_file.close()
-
 
     def _uses_data_generators(self):  # pylint: disable=no-self-use
         """
@@ -684,8 +717,10 @@ class Trainer:
         member variables that we use to set arguments for model.compile(), we group those arguments
         together here, to only specify them once.
         """
-        return {
+        # TODO(mark): factor all compile kwargs into a single dict in the json config.
+        return Params({
+                'gradient_clipping': self.gradient_clipping,
                 'loss': self.loss,
                 'optimizer': self.optimizer,
                 'metrics': self.metrics,
-                }
+                })
