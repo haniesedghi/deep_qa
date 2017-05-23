@@ -22,7 +22,7 @@ from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer as NltkPorterStemmer
 
 np.random.seed(seed=20)
-stemmer = NltkPorterStemmer()
+self_stemmer = NltkPorterStemmer()
 # stemmer for lematizing the words
 def pre_process(row):
     """
@@ -35,7 +35,7 @@ def pre_process(row):
     sentence = ' '.join(word.lower() for word in row)
     sentence_tokenized = [w for w in word_tokenize(sentence)]
     clean_row = [w for w in sentence_tokenized if w not in stopwords.words('english')]
-    clean_words = [stemmer.stem(w) for w in clean_row]
+    clean_words = [self_stemmer.stem(w) for w in clean_row]
     return clean_words
 
 def get_inverse_index_dict(tables_dataset):
@@ -83,8 +83,8 @@ def get_question_answer_pairs(filename, number):
 
     questions = []
     answers = []
-    with open(filename) as f:
-        reader = csv.reader(f)
+    with open(filename) as f_file:
+        reader = csv.reader(f_file)
         for row in reader:
             questions.append(row[0])
             answers.append(row[2])
@@ -185,15 +185,15 @@ def write_top_queries(question, answer, tables_dataset, scored_rows, top_n, outp
     for index, ((j, i), score) in enumerate(sorted_scored_rows[:top_n]): # for rare words
         label = 0
         row = ' '.join(data["tables"][j]["data"][i])
-        row = ' '.join([stemmer.stem(w.lower()) for w in word_tokenize(row)])
-        answer = ' '.join([stemmer.stem(w.lower()) for w in word_tokenize(answer)])
+        row = ' '.join([self_stemmer.stem(w.lower()) for w in word_tokenize(row)])
+        answer = ' '.join([self_stemmer.stem(w.lower()) for w in word_tokenize(answer)])
         if answer in row:
             label = 1
             question_score = question_score + 1
         retrieved_pair = (question, row, answer, score, label)
         output_list.append(retrieved_pair)
-    with open(output_file, 'a') as f:
-        writer = csv.writer(f)
+    with open(output_file, 'a') as f_file:
+        writer = csv.writer(f_file)
         for pair in output_list:
             writer.writerow(pair)
 
