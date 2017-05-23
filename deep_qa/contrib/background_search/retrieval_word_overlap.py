@@ -22,7 +22,7 @@ from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer as NltkPorterStemmer
 
 np.random.seed(seed=20)
-stemmer = NltkPorterStemmer() # pylint disable=invalid-name
+stemmer = NltkPorterStemmer()  # pylint: disable=invalid-name
 # stemmer for lematizing the words
 def pre_process(row):
     """
