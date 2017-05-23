@@ -22,7 +22,7 @@ from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer as NltkPorterStemmer
 
 np.random.seed(seed=20)
-stemmer = NltkPorterStemmer()  # pylint: disable=invalid-name
+stemmer = NltkPorterStemmer() # pylint disable=invalid-name
 # stemmer for lematizing the words
 def pre_process(row):
     """
@@ -182,8 +182,9 @@ def write_top_queries(question, answer, tables_dataset, scored_rows, top_n, outp
     sorted_scored_rows = sorted(scored_rows.items(), key=operator.itemgetter(1), reverse=True)
     # get top_n from the sorted dictionary
     output_list = []
-    for index, ((j, i), score) in enumerate(sorted_scored_rows[:top_n]): # for rare words
+    for index in enumerate(sorted_scored_rows[:top_n]):  # for rare words
         label = 0
+        ((j, i), score) = sorted_scored_rows[index]
         row = ' '.join(data["tables"][j]["data"][i])
         row = ' '.join([stemmer.stem(w.lower()) for w in word_tokenize(row)])
         answer = ' '.join([stemmer.stem(w.lower()) for w in word_tokenize(answer)])
