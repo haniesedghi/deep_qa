@@ -22,7 +22,7 @@ from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer as NltkPorterStemmer
 
 np.random.seed(seed=20)
-self_stemmer = NltkPorterStemmer()
+stemmer = NltkPorterStemmer()  # pylint: disable=invalid-name
 # stemmer for lematizing the words
 def pre_process(row):
     """
@@ -35,7 +35,7 @@ def pre_process(row):
     sentence = ' '.join(word.lower() for word in row)
     sentence_tokenized = [w for w in word_tokenize(sentence)]
     clean_row = [w for w in sentence_tokenized if w not in stopwords.words('english')]
-    clean_words = [self_stemmer.stem(w) for w in clean_row]
+    clean_words = [stemmer.stem(w) for w in clean_row]
     return clean_words
 
 def get_inverse_index_dict(tables_dataset):
@@ -185,8 +185,8 @@ def write_top_queries(question, answer, tables_dataset, scored_rows, top_n, outp
     for index, ((j, i), score) in enumerate(sorted_scored_rows[:top_n]): # for rare words
         label = 0
         row = ' '.join(data["tables"][j]["data"][i])
-        row = ' '.join([self_stemmer.stem(w.lower()) for w in word_tokenize(row)])
-        answer = ' '.join([self_stemmer.stem(w.lower()) for w in word_tokenize(answer)])
+        row = ' '.join([stemmer.stem(w.lower()) for w in word_tokenize(row)])
+        answer = ' '.join([stemmer.stem(w.lower()) for w in word_tokenize(answer)])
         if answer in row:
             label = 1
             question_score = question_score + 1
